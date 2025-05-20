@@ -233,6 +233,61 @@ void reduction_6_sequential(size_t N, const float* g_idata, float *g_odata) {
         }
 }
 
+__global__ 
+void ws_reduce(size_t N, float *g_idata, float *g_odata) {
+
+    // we declare a shared memory blovk the size of one warp
+    __shared__ float sdata[warpSize];   // built in variable warpSize;
+    unsigned int lidx = threadIdx.x;
+    unsigned int gidx = blockIdx.x * blockDim.x * 2 + threadIdx.x;
+    unsigned int gridSize = gridDim.x * blockDim.x * 2;
+    float val = 0.0f;
+    unsigned  FULL_MASK = 0xFFFFFFFFU;
+    // we will reduce inside wach warp in the block. 
+    // so we need to know which warp in the block and which lane in the 
+    // warp we are in.
+    unsigned int warpID = lidx / warpSize;
+    unsigned int lane = lidx % warpSize;
+
+    // load into local registers, not shared memory
+    while ((gidx + blockDim.x) < N) {
+        val += g_idata[gidx] + g_idata[gidx+ blockDim.x];
+        gidx += gridSize;
+         __syncthreads();
+    }   
+
+    // at this point we have one value of val per thread. 
+    // first warp shuffle will reduce those values so we 
+    // have one value for each warp
+    // reduce inside each warp in a tree-like fashion 
+    // each step is a sequential reduction
+    for (int offset = warpSize / 2; offset > 0; offset>>=1) {
+        val += __shfl_down(FULL_MASK, val, offset);
+    } 
+    
+    // from lane 0 of each warp, write the warp-reduced value to shared memory
+    if (lane ==0) {
+        sdata[warpID] = val;
+    }
+    __syncthreads();
+
+    // Hereafter we use only warp 0
+    if (warpID ==0) {
+        // check that there is meaningful memory corresponding to each lane.
+        // if not load 0
+        val = (lidx < blockDim.x / warpSize)? sdata[lane] : 0.0f;
+        //__syncwarp();
+        __syncthreads();
+        // final warp shuffle
+        for (int offset = warpSize / 2; offset > 0; offset>>=1) {
+            val += __shfl_down(FULL_MASK, val, offset);
+        }
+    }
+  
+    if (lidx ==0) atomicAdd(g_odata, val);
+}
+
+
 
 void init_const_matrix(float *mat, size_t N, const float val) {
         for (int i = 0; i < N; i++) {
@@ -437,6 +492,29 @@ int main(int argc, char *argv[]) {
     cudaEventRecord(stopEvent, 0);
     cudaCheck("reduction_6_sequential kernel execution failure of cudaEventRecord failure");
     printf("%25s\n", "Reduction 6: Sequential 4 kernel done");
+    cudaEventSynchronize(stopEvent);
+    cudaCheck("cudaEventSynchronize failure");
+    cudaEventElapsedTime(&ms, startEvent, stopEvent);
+    cudaCheck("cudaEventElapsedTime failure");
+    cudaMemcpy(h_sum, d_sum, sizeof(float), cudaMemcpyDeviceToHost);
+    cudaCheck("memcpy D2H failure");
+    //check correctness, print timing and bandwidth
+    postprocess(ref, h_sum, ms);
+    cudaMemset(d_sum, 0.0f, sizeof(float));
+    cudaCheck("cudaMemset failure");
+
+
+    //  kernel 7: warp shuffle
+    printf("%25s\n", "Kernel: Warp Shuffle");
+    // record the event
+    cudaEventRecord(startEvent, 0);
+    cudaCheck("cudaEventRecord failure");
+    // launch kernel
+    ws_reduce<<<dimGrid.x/2, dimBlock.x/2>>>(N, d_A, d_sum);
+    cudaCheck("ws_reduce kernel launch failure");
+    cudaEventRecord(stopEvent, 0);
+    cudaCheck("ws_reduce kernel execution failure of cudaEventRecord failure");
+    printf("%25s\n", "ws_reduce kernel done");
     cudaEventSynchronize(stopEvent);
     cudaCheck("cudaEventSynchronize failure");
     cudaEventElapsedTime(&ms, startEvent, stopEvent);
