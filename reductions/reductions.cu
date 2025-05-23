@@ -5,7 +5,7 @@
 
 
 //const size_t N  = 8ULL*1024ULL*1024ULL; // Data size
-const size_t N = 8ULL*1024ULL; // data size
+const size_t N = 8ULL*1024ULL*1024ULL; // data size
 const size_t MEM_SIZE = N*sizeof(float); // memory required for input vector
 const int BLOCK_SIZE = 256;
 const int BLOCK_SIZE_2 = 128;
@@ -148,16 +148,16 @@ void reduction_4_sequential(size_t N, const float* g_idata, float *g_odata) {
 __device__ 
 void warpReduce(volatile float* sdata, unsigned int lidx) {
     
-            //if (BLOCK_SIZE_2 >= 64) sdata[lidx] += sdata[lidx + 32];
+            if (BLOCK_SIZE_2 >= 64) sdata[lidx] += sdata[lidx + 32];
             //__syncthreads();
             if (BLOCK_SIZE_2 >= 32) sdata[lidx] += sdata[lidx + 16];
-            __syncthreads();
+            //__syncthreads();
             if (BLOCK_SIZE_2 >= 16) sdata[lidx] += sdata[lidx + 8];
-            __syncthreads();
+            //__syncthreads();
             if (BLOCK_SIZE_2 >= 8) sdata[lidx] += sdata[lidx + 4];
-            __syncthreads();
+            //__syncthreads();
             if (BLOCK_SIZE_2 >= 4) sdata[lidx] += sdata[lidx + 2];
-            __syncthreads();
+            //__syncthreads();
             if (BLOCK_SIZE_2 >= 2) sdata[lidx] += sdata[lidx + 1];
             
 }
@@ -177,14 +177,14 @@ void reduction_5_sequential(size_t N, const float* g_idata, float *g_odata) {
         }
         __syncthreads();
         // reduce in requestial order in shared memort
-        for (unsigned int s = blockDim.x /2; s >16; s>>=1) {
+        for (unsigned int s = blockDim.x /2; s >32; s>>=1) {
                 if (lidx < s) {
                         sdata[lidx] += sdata[lidx + s];
                 }
                 __syncthreads();
         }
        
-        if (lidx < 16) { 
+        if (lidx < 32) { 
             warpReduce(sdata, lidx);
         }
         if (lidx == 0 ) {
@@ -218,14 +218,14 @@ void reduction_6_sequential(size_t N, const float* g_idata, float *g_odata) {
         }
         __syncthreads();
         // reduce in requestial order in shared memort
-        for (unsigned int s = blockDim.x /2; s >16; s>>=1) {
+        for (unsigned int s = blockDim.x /2; s >32; s>>=1) {
                 if (lidx < s) {
                         sdata[lidx] += sdata[lidx + s];
                 }
                 __syncthreads();
         }
        
-        if (lidx < 16) { 
+        if (lidx < 32) { 
             warpReduce(sdata, lidx);
         }
         if (lidx == 0 ) {
@@ -237,7 +237,7 @@ __global__
 void ws_reduce(size_t N, float *g_idata, float *g_odata) {
 
     // we declare a shared memory blovk the size of one warp
-    __shared__ float sdata[warpSize];   // built in variable warpSize;
+    __shared__ float sdata[128/32];  // number of warps
     unsigned int lidx = threadIdx.x;
     unsigned int gidx = blockIdx.x * blockDim.x * 2 + threadIdx.x;
     unsigned int gridSize = gridDim.x * blockDim.x * 2;
@@ -253,7 +253,6 @@ void ws_reduce(size_t N, float *g_idata, float *g_odata) {
     while ((gidx + blockDim.x) < N) {
         val += g_idata[gidx] + g_idata[gidx+ blockDim.x];
         gidx += gridSize;
-         __syncthreads();
     }   
 
     // at this point we have one value of val per thread. 
@@ -262,7 +261,7 @@ void ws_reduce(size_t N, float *g_idata, float *g_odata) {
     // reduce inside each warp in a tree-like fashion 
     // each step is a sequential reduction
     for (int offset = warpSize / 2; offset > 0; offset>>=1) {
-        val += __shfl_down(FULL_MASK, val, offset);
+        val += __shfl_down_sync(FULL_MASK, val, offset);
     } 
     
     // from lane 0 of each warp, write the warp-reduced value to shared memory
@@ -276,11 +275,10 @@ void ws_reduce(size_t N, float *g_idata, float *g_odata) {
         // check that there is meaningful memory corresponding to each lane.
         // if not load 0
         val = (lidx < blockDim.x / warpSize)? sdata[lane] : 0.0f;
-        //__syncwarp();
-        __syncthreads();
+        __syncwarp();
         // final warp shuffle
         for (int offset = warpSize / 2; offset > 0; offset>>=1) {
-            val += __shfl_down(FULL_MASK, val, offset);
+            val += __shfl_down_sync(FULL_MASK, val, offset);
         }
     }
   
@@ -322,8 +320,9 @@ void postprocess(const float ref, const float *res, float ms) {
         }
         if (passed == true) {
             printf ("Postprocess passed\n");
-            printf("MEMORY SIZE (Bytes): %12.2f, time in ms: %12.2f, \
-            Bandwidth: %20.6f\n", float(MEM_SIZE), ms, (2*float(MEM_SIZE)*1e-06 )/ ms);
+            printf("MEMORY SIZE (MBytes): %12.2f, time in ms: %12.4f, \
+            Bandwidth (GB/s): %12.4f\n", float(MEM_SIZE)*1e-06, ms, (2*float(MEM_SIZE)*1e-06 )/ ms);
+	    printf("------------------------------\n");
         }
 }
 

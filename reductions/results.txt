@@ -1,0 +1,39 @@
+dimGrid: 32768 1 1. dimBlock: 256 1 1
+Constant matrix valiodation passed
+                  Routine          Bandwidth (GB/s)
+Interleaved: warp divergence
+Interleaved: warp divergence done
+Postprocess passed
+MEMORY SIZE (MBytes):        33.55, time in ms:       9.8047,             Bandwidth (GB/s):       6.8446
+------------------------------
+Interleaved: bank conflict
+Interleaved: bank conflict done
+Postprocess passed
+MEMORY SIZE (MBytes):        33.55, time in ms:       0.1000,             Bandwidth (GB/s):     670.8739
+------------------------------
+     Kernel: sequential 1
+Reduction 3: Sequential 1 kernel done
+Postprocess passed
+MEMORY SIZE (MBytes):        33.55, time in ms:       0.0913,             Bandwidth (GB/s):     734.8115
+------------------------------
+     Kernel: sequential 2
+Reduction 4: Sequential 2 kernel done
+Postprocess passed
+MEMORY SIZE (MBytes):        33.55, time in ms:       0.0863,             Bandwidth (GB/s):     777.8754
+------------------------------
+     Kernel: sequential 3
+Reduction 5: Sequential 3 kernel done
+Postprocess passed
+MEMORY SIZE (MBytes):        33.55, time in ms:       0.0532,             Bandwidth (GB/s):    1261.0656
+------------------------------
+     Kernel: sequential 3
+Reduction 6: Sequential 4 kernel done
+Postprocess passed
+MEMORY SIZE (MBytes):        33.55, time in ms:       0.0498,             Bandwidth (GB/s):    1346.9184
+------------------------------
+     Kernel: Warp Shuffle
+    ws_reduce kernel done
+Postprocess passed
+MEMORY SIZE (MBytes):        33.55, time in ms:       0.0551,             Bandwidth (GB/s):    1217.8583
+------------------------------
+Done, bye
