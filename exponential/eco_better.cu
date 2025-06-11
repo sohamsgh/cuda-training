@@ -8,6 +8,12 @@
 
 #define cudaCheck(msg) (cudacheck(msg, __FILE__, __LINE__))
 
+// data buffer and kernel sizes
+const size_t N = 8ULL*1024ULL*1024ULL; // 
+const size_t MEM_SIZE = N*sizeof(float); // memory required for input vector
+const int BLOCK_SIZE = 256;
+const int BLOCK_SIZE_2 = 128;
+const double VAL = 0.1;
 
 // error handling function
 void cudacheck(const char *msg, const char* file, int line) {
@@ -19,6 +25,33 @@ void cudacheck(const char *msg, const char* file, int line) {
                 exit(1);
         }
 }
+
+int ceil_div(int numerator, int denominator) {
+        std::div_t res = std::div(numerator, denominator);
+        return res.rem? (res.quot + 1) : res.quot;
+}
+
+void init_input(double *h_input, int n, double val) {
+	for (int i = 0; i < N; i++){
+		h_input[i] = ((double) (i - N/2))/(0.1*N); // keep the domain from -5 to 5
+	}
+}
+	
+void postprocess(const float ref, const float *res, float ms) {
+        bool passed = true;
+        if (*res != ref) {
+                printf("%25s\n", "*** FAILED ***");
+                printf("reference: %f result: %f\n", ref, *res);
+                passed = false;
+        }
+        if (passed == true) {
+            printf ("Postprocess passed\n");
+            printf("MEMORY SIZE (MBytes): %12.2f, time in ms: %12.4f, \
+            Bandwidth (GB/s): %12.4f\n", float(MEM_SIZE)*1e-06, ms, (2*float(MEM_SIZE)*1e-06 )/ ms);
+	    printf("------------------------------\n");
+        }
+}
+
 
 __device__ inline 
 double ecoexp_original_device(double y) {
@@ -121,7 +154,6 @@ void test_fast_exp_kernels(double* input, double* output_std,
 
 	// grid-strided loop
 	for (int i = idx; i < n; i += gridDim.x*blockDim.x) {
-
 		double x = input[i];
 		double result_std = exp(x)
 
@@ -166,4 +198,38 @@ void bench_fast_exp_kernels(double* input, double* output,
 	}
 }
 
-			
+// Host functions
+// Test accuracy of the kernels
+
+void test_accuracy(int method) {
+
+	// buffers
+	// host buffers
+	double *h_input, *h_output_std, *h_output_fast, *h_errs;
+	// device buffers
+	double *d_input, *d_output_std, *d_output_fast, *d_errs;
+	// allocate host memory
+	h_input = new double[N];
+	h_output_std = new double[N];
+	h_output_fast = new double[N];
+	h_errs = new double[N];
+	// allocate device memory
+	cudaMalloc(&d_input, MEM_SIZE);	
+	cudaMalloc(&d_output_std, MEM_SIZE);	
+	cudaMalloc(&d_output_fast, MEM_SIZE);
+	cudaMalloc(&d_errs, MEM_SIZE);
+	cudaCheck("cuaMalloc failure");	
+	// intialize input data
+	init_input(h_input, N, VAL);
+	// copy to device
+	cudaMemcpy(d_input, h_input, MEM_SIZE, cudaMemcpyHosttoDevice);
+
+	// timing variable
+	float ms;
+	// grid and block dimensions
+	dim3 dinGrid(ceil_div(N, BLOCK_SIZE));
+	dim3dimBlock(BLOCK_SIZE);
+    	printf("dimGrid: %d %d %d. dimBlock: %d %d %d\n",
+    	dimGrid.x, dimGrid.y, dimGrid.z, dimBlock.x, dimBlock.y, dimBlock.z);
+
+
