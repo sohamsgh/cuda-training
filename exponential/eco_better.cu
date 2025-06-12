@@ -10,10 +10,12 @@
 
 // data buffer and kernel sizes
 const size_t N = 8ULL*1024ULL*1024ULL; // 
-const size_t MEM_SIZE = N*sizeof(float); // memory required for input vector
+const size_t MEM_SIZE = N*sizeof(double); // memory required for input vector
 const int BLOCK_SIZE = 256;
 const int BLOCK_SIZE_2 = 128;
 const double VAL = 0.1;
+const double TOLERANCE = 0.00001;
+const char* METHOD_NAMES[] = {"Original Schraudolph", "Corrected Schraudolph", "Pade Approximant", "5th Order Polynomial"};
 
 // error handling function
 void cudacheck(const char *msg, const char* file, int line) {
@@ -37,19 +39,27 @@ void init_input(double *h_input, int n, double val) {
 	}
 }
 	
-void postprocess(const float ref, const float *res, float ms) {
-        bool passed = true;
-        if (*res != ref) {
-                printf("%25s\n", "*** FAILED ***");
-                printf("reference: %f result: %f\n", ref, *res);
-                passed = false;
-        }
-        if (passed == true) {
-            printf ("Postprocess passed\n");
-            printf("MEMORY SIZE (MBytes): %12.2f, time in ms: %12.4f, \
-            Bandwidth (GB/s): %12.4f\n", float(MEM_SIZE)*1e-06, ms, (2*float(MEM_SIZE)*1e-06 )/ ms);
-	    printf("------------------------------\n");
-        }
+int find_max_error(double *input, double *errors, int n, double tolerance) {
+        int num_failures = 0;
+	double max_err = 0.0;
+	double max_err_x = 0.0;
+	for (int i = 0; i < n; i++) {
+	       if (errors[i] > tolerance) {
+		       num_failures++;
+	       }
+	       if (errors[i] > max_err) {
+		       max_err = errors[i];
+		       max_err_x = input[i];
+	       }
+	}
+
+	printf("  Max error: %e at x = %8.4f\n", max_error, max_error_x);
+    	printf("  Failures (>%.6f): %d/%d\n", tolerance, num_failures, n);
+
+        printf ("Bandwidth Results:\n");
+        printf("MEMORY SIZE (MBytes): %12.2f, time in ms: %12.4f, \
+        Bandwidth (GB/s): %12.4f\n", float(MEM_SIZE)*1e-06, ms, (2*float(MEM_SIZE)*1e-06 )/ ms);
+	printf("------------------------------\n");
 }
 
 
@@ -232,4 +242,47 @@ void test_accuracy(int method) {
     	printf("dimGrid: %d %d %d. dimBlock: %d %d %d\n",
     	dimGrid.x, dimGrid.y, dimGrid.z, dimBlock.x, dimBlock.y, dimBlock.z);
 
+        // Create events for timing
+    	cudaEvent_t startEvent, stopEvent;
+    	cudaEventCreate(&startEvent);
+    	cudaEventCreate(&stopEvent);
+    	cudaCheck("cudaeventCreateFailure");
+    	// Timings
+    	printf("%25s %25s\n", "Routine", "Bandwidth (GB/s)");
+	// Test kernel
+	printf("%25s\n", "Launching test kernels");
+	// record the event
+    	cudaEventRecord(startEvent, 0);
+    	cudaCheck("cudaEventRecord failure");
+	// Print the method being used
+	printf("Method %d (%s):\n", method, METHOD_NAME[method]);
+    	// launch kernel
+    	test_fast_exp_kernels<<<dimGrid, dimBlock>>>(d_input, d_output_std, d_output_fast, d_errs, n, method);
+    	 cudaCheck("reduction_1_interleaved kernel launch failure");
+    	cudaEventRecord(stopEvent, 0);
+    	cudaCheck("reduction_1_interleaved kernel execution failure of cudaEventRecord failure");
+    	printf("%25s\n", "Interleaved: warp divergence done");
+    	cudaEventSynchronize(stopEvent);
+    	cudaCheck("cudaEventSynchronize failure");
+    	cudaEventElapsedTime(&ms, startEvent, stopEvent);
+    	cudaCheck("cudaEventElapsedTime failure");
+	// copy results back
+	cudaMemcpy(h_output_std, d_output_std, MEM_SIZE, cudaMemcpyDevicetoHost);
+	cudaMemcpy(h_output_fast, d_output_fast, MEM_SIZE, cudaMemcpyDevicetoHost);
+	cudaMemcpy(h_errs, d_errs, MEM_SIZE, cudaMemcpyDevicetoHost);
+	// Check errors and print timings
+	find_max_error(h_input, h_errors, N, TOLERANCE);
 
+	// free host memory
+	delete[] h_input;
+	delete[] h_output_std;
+	delete[] h_output_fast;
+	delete[] h_errs;
+	// free device memory
+	cudaFree(d_input);
+	cudaFree(d_output_std);
+	cudaFree(d_output_fast;
+	cudaFree(d_errs);
+
+}
+	
