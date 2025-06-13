@@ -15,8 +15,7 @@ const size_t TEST_MEM_SIZE = TEST_N*sizeof(double); // memory required for input
 const size_t BENCH_MEM_SIZE = BENCH_N*sizeof(double); // memory required for input vector
 const int BLOCK_SIZE = 256;
 const int ITERATIONS = 100;
-const double VAL = 0.1;
-const double TOLERANCE = 0.00001;
+const double TOLERANCE = 0.001;
 const char* METHOD_NAMES[] = {"Original Schraudolph", "Corrected Schraudolph", "Pade Approximant", "5th Order Polynomial"};
 
 // error handling function
@@ -36,12 +35,12 @@ int ceil_div(int numerator, int denominator) {
 }
 
 void init_input(double *h_input, int n, double weight) {
-	for (int i = 0; i < N; i++){
-		h_input[i] = ((double) (i - N/2))/(weight*N); // keep the domain from -5 to 5
+	for (int i = 0; i < n; i++){
+		h_input[i] = ((double) (i - n/2))/(weight*n); // keep the domain from -5 to 5
 	}
 }
 	
-int find_max_error(double *input, double *errors, int n, double tolerance) {
+void find_max_error(double *input, double *errors, int n, double tolerance) {
         int num_failures = 0;
 	double max_err = 0.0;
 	double max_err_x = 0.0;
@@ -55,7 +54,7 @@ int find_max_error(double *input, double *errors, int n, double tolerance) {
 	       }
 	}
 
-	printf("  Max error: %e at x = %8.4f\n", max_error, max_error_x);
+	printf("  Max error: %e at x = %8.4f\n", max_err, max_err_x);
     	printf("  Failures (>%.6f): %d/%d\n", tolerance, num_failures, n);
 }
 
@@ -71,7 +70,7 @@ __device__ inline
 double ecoexp_original_device(double y) {
 
 	if (y > 700 ) return HUGE_VAL;
-	if ((y < -700) return 0.0;
+	if (y < -700) return 0.0;
 
 	// Original Schraudolph
 	union {
@@ -169,7 +168,7 @@ void test_fast_exp_kernels(double* input, double* output_std,
 	// grid-strided loop
 	for (int i = idx; i < n; i += gridDim.x*blockDim.x) {
 		double x = input[i];
-		double result_std = exp(x)
+		double result_std = exp(x);
 
 		// test the various fast kernels
 		switch (method) {
@@ -192,16 +191,16 @@ void test_fast_exp_kernels(double* input, double* output_std,
 // Peeformance kernel
 __global__
 void bench_fast_exp_kernels(double* input, double* output, 
-		int n, int method, int iterations, double* weight) {
+		int n, int method, int iterations, double weight) {
 
-	unsogned int idx = lockIdx.x*blovkDim.x + threadIdx.x;
+	unsigned int idx = blockIdx.x*blockDim.x + threadIdx.x;
 	double result = 0.0f;
 
 	// grid-strided loop
 	for (int i = idx; i< n; i+=gridDim.x*blockDim.x) {
-
+		double x = input[i];
 		// iterations
-		for (int j = 0; j < iterations; j++)n {
+		for (int j = 0; j < iterations; j++) {
 			switch (method) {
 				case 0: result += exp(x + weight*j); break;  // standard exponential
 				case 1: result += ecoexp_improved2_device(x+weight*j); break;  // fast exponential
@@ -226,7 +225,7 @@ void test_accuracy(int method) {
 	h_input = new double[TEST_N];
 	h_output_std = new double[TEST_N];
 	h_output_fast = new double[TEST_N];
-	h_errs = new double[N];
+	h_errs = new double[TEST_N];
 	// allocate device memory
 	cudaMalloc(&d_input, TEST_MEM_SIZE);	
 	cudaMalloc(&d_output_std, TEST_MEM_SIZE);	
@@ -236,12 +235,12 @@ void test_accuracy(int method) {
 	// intialize input data
 	init_input(h_input, TEST_N, 0.1);
 	// copy to device
-	cudaMemcpy(d_input, h_input, TEST_MEM_SIZE, cudaMemcpyHosttoDevice);
+	cudaMemcpy(d_input, h_input, TEST_MEM_SIZE, cudaMemcpyHostToDevice);
 
 	// timing variable
 	float ms;
 	// grid and block dimensions
-	dim3 dinGrid(ceil_div(TEST_N, BLOCK_SIZE));
+	dim3 dimGrid(ceil_div(TEST_N, BLOCK_SIZE));
 	dim3 dimBlock(BLOCK_SIZE);
     	printf("dimGrid: %d %d %d. dimBlock: %d %d %d\n",
     	dimGrid.x, dimGrid.y, dimGrid.z, dimBlock.x, dimBlock.y, dimBlock.z);
@@ -259,25 +258,25 @@ void test_accuracy(int method) {
     	cudaEventRecord(startEvent, 0);
     	cudaCheck("cudaEventRecord failure");
 	// Print the method being used
-	printf("Method %d (%s):\n", method, METHOD_NAME[method]);
+	printf("Method %d (%s):\n", method, METHOD_NAMES[method]);
     	// launch kernel
     	test_fast_exp_kernels<<<dimGrid, dimBlock>>>(d_input, d_output_std, d_output_fast, d_errs, TEST_N, method);
-    	 cudaCheck("reduction_1_interleaved kernel launch failure");
+    	 cudaCheck("Fast exponentials methods kernel launch failure");
     	cudaEventRecord(stopEvent, 0);
-    	cudaCheck("reduction_1_interleaved kernel execution failure of cudaEventRecord failure");
-    	printf("%25s\n", "Interleaved: warp divergence done");
+    	cudaCheck("Fast exponential methods  kernel execution failure of cudaEventRecord failure");
+    	printf("%25s\n", "Fast exponential methods  done");
     	cudaEventSynchronize(stopEvent);
     	cudaCheck("cudaEventSynchronize failure");
     	cudaEventElapsedTime(&ms, startEvent, stopEvent);
     	cudaCheck("cudaEventElapsedTime failure");
 	// copy results back
-	cudaMemcpy(h_output_std, d_output_std, TEST_MEM_SIZE, cudaMemcpyDevicetoHost);
-	cudaMemcpy(h_output_fast, d_output_fast, TEST_MEM_SIZE, cudaMemcpyDevicetoHost);
-	cudaMemcpy(h_errs, d_errs, TEST_MEM_SIZE, cudaMemcpyDevicetoHost);
+	cudaMemcpy(h_output_std, d_output_std, TEST_MEM_SIZE, cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_output_fast, d_output_fast, TEST_MEM_SIZE, cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_errs, d_errs, TEST_MEM_SIZE, cudaMemcpyDeviceToHost);
 	// Check errors and print timings
-	find_max_error(h_input, h_errors, TEST_N, TOLERANCE);
+	find_max_error(h_input, h_errs, TEST_N, TOLERANCE);
 	// print bandwidth 
-	print_bandwidth(ms, TEST_MEM_SIZE)
+	print_bandwidth(ms, TEST_MEM_SIZE);
     	// destroy events
     	cudaEventDestroy(startEvent);
     	cudaEventDestroy(stopEvent);
@@ -289,7 +288,7 @@ void test_accuracy(int method) {
 	// free device memory
 	cudaFree(d_input);
 	cudaFree(d_output_std);
-	cudaFree(d_output_fast;
+	cudaFree(d_output_fast);
 	cudaFree(d_errs);
 	cudaCheck("cudaFree error");
 
@@ -311,12 +310,12 @@ void benchmark() {
 	// intialize input data
 	init_input(h_input, BENCH_N, 1.0);
 	// copy to device
-	cudaMemcpy(d_input, h_input, BENCH_MEM_SIZE, cudaMemcpyHosttoDevice);
+	cudaMemcpy(d_input, h_input, BENCH_MEM_SIZE, cudaMemcpyHostToDevice);
 
 	// timing variable
-	double std_ms, fast_ms;
+	float std_ms, fast_ms;
 	// grid and block dimensions
-	dim3 dinGrid(ceil_div(BENCH_N, BLOCK_SIZE));
+	dim3 dimGrid(ceil_div(BENCH_N, BLOCK_SIZE));
 	dim3 dimBlock(BLOCK_SIZE);
     	printf("dimGrid: %d %d %d. dimBlock: %d %d %d\n",
     	dimGrid.x, dimGrid.y, dimGrid.z, dimBlock.x, dimBlock.y, dimBlock.z);
@@ -332,15 +331,15 @@ void benchmark() {
     	// Timings
     	printf("%25s %25s\n", "Routine", "Bandwidth (GB/s)");
 	//  Benchmark standard kernel
-	printf("%25s\n", "Launching benchmark kernel);
+	printf("%25s\n", "Launching benchmark kernel");
 	// record the event
     	cudaEventRecord(startEvent, 0);
     	cudaCheck("cudaEventRecord failure");
 	// Print the method being used
-	printf("%25s\n", "Launching stanard exponential kernel);
+	printf("%25s\n", "Launching stanard exponential kernel");
     	// launch kernel
-	bench_fast_exp_kernels(d_input, d_output, BENCH_N, 0, ITERATIONS, weight)
-    	 cudaCheck("standard exponential benchmark kernel launch failure");
+	bench_fast_exp_kernels<<<dimGrid, dimBlock>>>(d_input, d_output, BENCH_N, 0, ITERATIONS, weight);
+    	cudaCheck("standard exponential benchmark kernel launch failure");
     	cudaEventRecord(stopEvent, 0);
     	cudaCheck("standard exponential benchmark kernel execution failure of cudaEventRecord failure");
     	printf("%25s\n", "Standard exponential benchmark kernel done");
@@ -349,31 +348,31 @@ void benchmark() {
     	cudaEventElapsedTime(&std_ms, startEvent, stopEvent);
     	cudaCheck("cudaEventElapsedTime failure");
 	// copy results back
-	cudaMemcpy(h_output, d_output, BENCH_MEM_SIZE, cudaMemcpyDevicetoHost);
+	cudaMemcpy(h_output, d_output, BENCH_MEM_SIZE, cudaMemcpyDeviceToHost);
 	// print bandwidth
-	print_bandwidth(std_ms, BENCH_MEM_SIZE)
+	print_bandwidth(std_ms, BENCH_MEM_SIZE);
 
 	//  Benchmark fast kernel
-	printf("%25s\n", "Launching benchmark kernel);
+	printf("%25s\n", "Launching benchmark kernel");
 	// record the event
     	cudaEventRecord(startEvent, 0);
     	cudaCheck("cudaEventRecord failure");
 	// Print the method being used
-	printf("%25s\n", "Launching fast exponential kernel);
+	printf("%25s\n", "Launching fast exponential kernel");
     	// launch kernel
-	bench_fast_exp_kernels(d_input, d_output, BENCH_N, 1, ITERATIONS, weight)
-    	 cudaCheck("fast exponential benchmark kernel launch failure");
+	bench_fast_exp_kernels<<<dimGrid, dimBlock>>>(d_input, d_output, BENCH_N, 1, ITERATIONS, weight);
+    	cudaCheck("fast exponential benchmark kernel launch failure");
     	cudaEventRecord(stopEvent, 0);
     	cudaCheck("fast exponential benchmark kernel execution failure of cudaEventRecord failure");
     	printf("%25s\n", "fast exponential benchmark kernel done");
     	cudaEventSynchronize(stopEvent);
     	cudaCheck("cudaEventSynchronize failure");
-    	cudaEventElapsedTime(&std_ms, startEvent, stopEvent);
+    	cudaEventElapsedTime(&fast_ms, startEvent, stopEvent);
     	cudaCheck("cudaEventElapsedTime failure");
 	// copy results back
-	cudaMemcpy(h_output, d_output, BENCH_MEM_SIZE, cudaMemcpyDevicetoHost);
+	cudaMemcpy(h_output, d_output, BENCH_MEM_SIZE, cudaMemcpyDeviceToHost);
 	// print bandwidth
-	print_bandwidth(fast_ms, BENCH_MEM_SIZE)
+	print_bandwidth(fast_ms, BENCH_MEM_SIZE);
     	// destroy events
     	cudaEventDestroy(startEvent);
     	cudaEventDestroy(stopEvent);
