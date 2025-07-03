@@ -233,6 +233,55 @@ void reduction_6_sequential(size_t N, const float* g_idata, float *g_odata) {
         }
 }
 
+__global__
+void reduction_7_sequential(size_t N, const float* g_idata, float *g_odata) {
+	//slight modification on kernel 6
+	// when we load + reduce from global memory, we store the 
+	// partial reductions in registers, and store them in local memory
+	// after each thread has finished its local reduction.
+        // we will reduce as we load as many times as necessary.
+        // The relationship between gridblock and data is as follows.
+        // Inside a single block we access memory the same way as earlier. 
+        // Each thread in a block rduces two input floats and loads in in shared mem.
+        // At i and at i+blockDim.x.
+        // So a block works on memory 2*blockDim.x. 
+        // The previous kernel had 2*blockDim.x*gridDim.x = N (number of input elements). 
+        // This kernel has a gridDim.x that is a fraction of earlier.   
+        // we go over the input memory in a grid sided loop
+        // Inside the loop, for each block we access 
+        // declare shared memory
+        __shared__ float sdata[BLOCK_SIZE_2];
+        unsigned int lidx = threadIdx.x;
+        unsigned int gidx = blockIdx.x * blockDim.x * 2 + threadIdx.x;
+        unsigned int gridSize = gridDim.x * blockDim.x * 2;
+	float local_sum = 0.0f;
+        sdata[lidx] = 0.0f;
+        // each thread, like before, loads one element from memory
+        while (gidx < N) {
+                local_sum +=  g_idata[gidx] + g_idata[gidx + blockDim.x];
+                gidx += gridSize;
+        }
+	sdata[lidx] = local_sum;
+        __syncthreads();
+        // reduce in requestial order in shared memort
+        for (unsigned int s = blockDim.x /2; s >32; s>>=1) {
+                if (lidx < s) {
+                        sdata[lidx] += sdata[lidx + s];
+                }
+                __syncthreads();
+        }
+       
+        if (lidx < 32) { 
+            warpReduce(sdata, lidx);
+        }
+        if (lidx == 0 ) {
+                atomicAdd(g_odata, sdata[0]);
+        }
+}
+
+__global__ 
+
+
 __global__ 
 void ws_reduce(size_t N, float *g_idata, float *g_odata) {
 
@@ -481,7 +530,7 @@ int main(int argc, char *argv[]) {
     cudaCheck("cudaMemset failure");
 
     //  kernel 6: Sequential 4
-    printf("%25s\n", "Kernel: sequential 3");
+    printf("%25s\n", "Kernel: sequential 4");
     // record the event
     cudaEventRecord(startEvent, 0);
     cudaCheck("cudaEventRecord failure");
@@ -502,8 +551,30 @@ int main(int argc, char *argv[]) {
     cudaMemset(d_sum, 0.0f, sizeof(float));
     cudaCheck("cudaMemset failure");
 
+    //  kernel 7: Sequential 5
+    printf("%25s\n", "Kernel: sequential 5");
+    // record the event
+    cudaEventRecord(startEvent, 0);
+    cudaCheck("cudaEventRecord failure");
+    // launch kernel
+    reduction_6_sequential<<<dimGrid.x/2, dimBlock.x/2>>>(N, d_A, d_sum);
+    cudaCheck("reduction_7_sequential kernel launch failure");
+    cudaEventRecord(stopEvent, 0);
+    cudaCheck("reduction_7_sequential kernel execution failure of cudaEventRecord failure");
+    printf("%25s\n", "Reduction 7: Sequential 5 kernel done");
+    cudaEventSynchronize(stopEvent);
+    cudaCheck("cudaEventSynchronize failure");
+    cudaEventElapsedTime(&ms, startEvent, stopEvent);
+    cudaCheck("cudaEventElapsedTime failure");
+    cudaMemcpy(h_sum, d_sum, sizeof(float), cudaMemcpyDeviceToHost);
+    cudaCheck("memcpy D2H failure");
+    //check correctness, print timing and bandwidth
+    postprocess(ref, h_sum, ms);
+    cudaMemset(d_sum, 0.0f, sizeof(float));
+    cudaCheck("cudaMemset failure");
 
-    //  kernel 7: warp shuffle
+
+    //  kernel 8: warp shuffle
     printf("%25s\n", "Kernel: Warp Shuffle");
     // record the event
     cudaEventRecord(startEvent, 0);
